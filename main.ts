@@ -8,13 +8,15 @@ interface CustomJSSettings {
   jsFolder: string;
   startupScriptNames: string[];
   registeredInvocableScriptNames: string[];
+  rerunStartupScriptsOnFileChange: boolean;
 }
 
 const DEFAULT_SETTINGS: CustomJSSettings = {
   jsFiles: '',
   jsFolder: '',
   startupScriptNames: [],
-  registeredInvocableScriptNames: []
+  registeredInvocableScriptNames: [],
+  rerunStartupScriptsOnFileChange: false,
 }
 
 interface Invocable {
@@ -95,17 +97,17 @@ export default class CustomJS extends Plugin {
 
   async deconstructLoadedFiles() {
     // Run deconstructor if exists
-      for (const deconstructor of this.deconstructorsOfLoadedFiles) {
-        try {
-          await deconstructor.deconstructor();
-        } catch (e) {
-          console.error(`${deconstructor.name} failed`);
-          console.error(e);
-        }
+    for (const deconstructor of this.deconstructorsOfLoadedFiles) {
+      try {
+        await deconstructor.deconstructor();
+      } catch (e) {
+        console.error(`${deconstructor.name} failed`);
+        console.error(e);
       }
+    }
 
-      // Clear the list
-      this.deconstructorsOfLoadedFiles = [];
+    // Clear the list
+    this.deconstructorsOfLoadedFiles = [];
   }
 
   async reloadIfNeeded(f: TAbstractFile) {
@@ -115,6 +117,13 @@ export default class CustomJS extends Plugin {
       await this.deconstructLoadedFiles();
 
       await this.loadClasses();
+
+      // invoke startup scripts again if wanted
+      if (this.settings.rerunStartupScriptsOnFileChange) {
+        for (const startupScriptName of this.settings.startupScriptNames) {
+          await this.invokeScript(startupScriptName);
+        }
+      }
 
       // reload dataviewjs blocks if installed & version >= 0.4.11
       if (this.app.plugins.enabledPlugins.has('dataview')) {
@@ -370,6 +379,18 @@ class CustomJSSettingsTab extends PluginSettingTab {
             this.display();
           }
         })
+      );
+
+    new Setting(containerEl)
+      .setName('Re-execute the start scripts when reloading')
+      .setDesc('Decides whether the startup scripts should be executed again after reloading the scripts')
+      .addToggle(toggle =>
+        toggle
+          .setValue(this.plugin.settings.rerunStartupScriptsOnFileChange)
+          .onChange(async value => {
+            this.plugin.settings.rerunStartupScriptsOnFileChange = value;
+            await this.plugin.saveSettings();
+          })
       );
   }
 }
