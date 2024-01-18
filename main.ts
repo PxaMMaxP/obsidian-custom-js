@@ -27,6 +27,7 @@ function isInvocable(x: any): x is Invocable {
 
 export default class CustomJS extends Plugin {
   settings: CustomJSSettings;
+  deconstructorsOfLoadedFiles: { deconstructor: () => void, name: string }[] = [];
 
   async onload() {
     console.log('Loading CustomJS');
@@ -92,8 +93,27 @@ export default class CustomJS extends Plugin {
     }
   }
 
+  async deconstructLoadedFiles() {
+    // Run deconstructor if exists
+      for (const deconstructor of this.deconstructorsOfLoadedFiles) {
+        try {
+          await deconstructor.deconstructor();
+        } catch (e) {
+          console.error(`${deconstructor.name} failed`);
+          console.error(e);
+        }
+      }
+
+      // Clear the list
+      this.deconstructorsOfLoadedFiles = [];
+  }
+
   async reloadIfNeeded(f: TAbstractFile) {
     if (f.path.endsWith('.js')) {
+
+      // Run deconstructor if exists
+      await this.deconstructLoadedFiles();
+
       await this.loadClasses();
 
       // reload dataviewjs blocks if installed & version >= 0.4.11
@@ -118,11 +138,22 @@ export default class CustomJS extends Plugin {
   async evalFile(f: string): Promise<void> {
     try {
       const file = await this.app.vault.adapter.read(f);
-      const def = debuggableEval(`(${file})`, f) as new () => unknown;
+      const def = debuggableEval(`(${file})`, f) as new () => { deconstructor?: () => void };
 
       // Store the existing instance
       const cls = new def();
       window.customJS[cls.constructor.name] = cls;
+
+      // Check if the class has a deconstructor
+      if (typeof cls.deconstructor === 'function') {
+        // Add the deconstructor to the list
+        const deconstructor = cls.deconstructor.bind(cls);
+        const deconstructorWrapper = {
+          deconstructor: deconstructor,
+          name: `Deconstructor of ${cls.constructor.name}`
+        };
+        this.deconstructorsOfLoadedFiles.push(deconstructorWrapper);
+      }
 
       // Provide a way to create a new instance
       window.customJS[`create${def.name}Instance`] = () => new def();
